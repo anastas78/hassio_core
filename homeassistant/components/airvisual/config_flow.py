@@ -6,12 +6,14 @@ from collections.abc import Mapping
 from typing import Any
 
 from pyairvisual import CloudAPI, NodeSamba
-from pyairvisual.errors import (
-    AirVisualError,
+from pyairvisual.cloud_api import (
     InvalidKeyError,
-    NodeProError,
+    KeyExpiredError,
     NotFoundError,
+    UnauthorizedError,
 )
+from pyairvisual.errors import AirVisualError
+from pyairvisual.node import NodeProError
 import voluptuous as vol
 
 from homeassistant import config_entries
@@ -119,7 +121,7 @@ class AirVisualFlowHandler(config_entries.ConfigFlow, domain=DOMAIN):
             if user_input[CONF_API_KEY] not in valid_keys:
                 try:
                     await coro
-                except InvalidKeyError:
+                except (InvalidKeyError, KeyExpiredError, UnauthorizedError):
                     errors[CONF_API_KEY] = "invalid_api_key"
                 except NotFoundError:
                     errors[CONF_CITY] = "location_not_found"
