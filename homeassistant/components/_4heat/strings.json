@@ -1,0 +1,37 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "4heat controller is a bit 'lazy'. Try a couple of times to connect if you get connection error. ",
+        "data": {
+          "host": "[%key:common::config_flow::data::host%]",
+          "port": "[%key:common::config_flow::data::port%]"
+        }
+      },
+      "sensors": {
+        "data": {
+          "mode": "[%key:common::config_flow::data::mode%]",
+          "sensors": "Monitored conditions"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "[%key:common::config_flow::error::cannot_connect%]",
+      "invalid_auth": "[%key:common::config_flow::error::invalid_auth%]",
+      "unknown": "[%key:common::config_flow::error::unknown%]"
+    },
+    "abort": {
+      "host_exists": "[%key:common::config_flow::abort::already_configured_device%]"
+    }
+  },
+  "device_automation": {
+    "trigger_subtype": {
+      "button": "Button"
+    },
+    "trigger_type": {
+      "single": "{subtype} single clicked",
+      "btn_down": "{subtype} button down",
+      "btn_up": "{subtype} button up"
+    }
+  }
+}
