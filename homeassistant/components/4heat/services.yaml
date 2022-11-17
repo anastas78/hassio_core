@@ -1,21 +1,32 @@
 set_value:
   name: Set value
-  description: Sets val speed.
-
+  description: Sets configuration value.
+  target:
+    entity:
+      domain: 4heat
   fields:
     entity_id:
-      description: Id of the entiy to set
+      description: id of the entiy to set
       example: "sensor.something"
       required: true
+      selector:
+        text:
     value:
       description: value to set
       example: "5"
+      required: true
       selector:
         number:
 turn_on:
-  name: Turn the 4heat on
-  description: Sets val speed.
-  fields:
-    entity_id:
-      description: Id of the entiy
-      example: "sensor.something"
+  name: Turn on
+  description: Turn 4heat device on.
+  target:
+    entity:
+      domain: 4heat
+
+turn_off:
+  name: Turn off
+  description: Turn 4heat device off.
+  target:
+    entity:
+      domain: 4heat
