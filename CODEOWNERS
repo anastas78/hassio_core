@@ -21,6 +21,7 @@ build.json @home-assistant/supervisor
 /homeassistant/scripts/check_config.py @kellerza
 
 # Integrations
+/homeassistant/components/_4heat/ @zaubererty @anastas78
 /homeassistant/components/abode/ @shred86
 /tests/components/abode/ @shred86
 /homeassistant/components/accuweather/ @bieniu
