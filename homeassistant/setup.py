@@ -265,14 +265,16 @@ async def _async_setup_component(
         await asyncio.sleep(0)
         await hass.config_entries.flow.async_wait_init_flow_finish(domain)
 
+        # Add to components before the async_setup
+        # call to avoid a deadlock when forwarding platforms
+        hass.config.components.add(domain)
+
         await asyncio.gather(
             *(
                 entry.async_setup(hass, integration=integration)
                 for entry in hass.config_entries.async_entries(domain)
             )
         )
-
-        hass.config.components.add(domain)
 
     # Cleanup
     if domain in hass.data[DATA_SETUP]:
@@ -355,11 +357,10 @@ async def async_process_deps_reqs(
     if failed_deps := await _async_process_dependencies(hass, config, integration):
         raise DependencyError(failed_deps)
 
-    if not hass.config.skip_pip and integration.requirements:
-        async with hass.timeout.async_freeze(integration.domain):
-            await requirements.async_get_integration_with_requirements(
-                hass, integration.domain
-            )
+    async with hass.timeout.async_freeze(integration.domain):
+        await requirements.async_get_integration_with_requirements(
+            hass, integration.domain
+        )
 
     processed.add(integration.domain)
 
@@ -432,7 +433,7 @@ def async_get_loaded_integrations(hass: core.HomeAssistant) -> set[str]:
         if "." not in component:
             integrations.add(component)
             continue
-        domain, platform = component.split(".", 1)
+        domain, _, platform = component.partition(".")
         if domain in BASE_PLATFORMS:
             integrations.add(platform)
     return integrations
@@ -457,10 +458,7 @@ def async_start_setup(
     time_taken = dt_util.utcnow() - started
     for unique, domain in unique_components.items():
         del setup_started[unique]
-        if "." in domain:
-            _, integration = domain.split(".", 1)
-        else:
-            integration = domain
+        integration = domain.rpartition(".")[-1]
         if integration in setup_time:
             setup_time[integration] += time_taken
         else:

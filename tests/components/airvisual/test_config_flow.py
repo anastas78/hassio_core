@@ -1,12 +1,14 @@
 """Define tests for the AirVisual config flow."""
 from unittest.mock import patch
 
-from pyairvisual.errors import (
-    AirVisualError,
+from pyairvisual.cloud_api import (
     InvalidKeyError,
-    NodeProError,
+    KeyExpiredError,
     NotFoundError,
+    UnauthorizedError,
 )
+from pyairvisual.errors import AirVisualError
+from pyairvisual.node import NodeProError
 import pytest
 
 from homeassistant import data_entry_flow
@@ -81,6 +83,28 @@ async def test_duplicate_error(hass, config, config_entry, data):
                 CONF_COUNTRY: "China",
             },
             InvalidKeyError,
+            {CONF_API_KEY: "invalid_api_key"},
+            INTEGRATION_TYPE_GEOGRAPHY_NAME,
+        ),
+        (
+            {
+                CONF_API_KEY: "abcde12345",
+                CONF_CITY: "Beijing",
+                CONF_STATE: "Beijing",
+                CONF_COUNTRY: "China",
+            },
+            KeyExpiredError,
+            {CONF_API_KEY: "invalid_api_key"},
+            INTEGRATION_TYPE_GEOGRAPHY_NAME,
+        ),
+        (
+            {
+                CONF_API_KEY: "abcde12345",
+                CONF_CITY: "Beijing",
+                CONF_STATE: "Beijing",
+                CONF_COUNTRY: "China",
+            },
+            UnauthorizedError,
             {CONF_API_KEY: "invalid_api_key"},
             INTEGRATION_TYPE_GEOGRAPHY_NAME,
         ),
