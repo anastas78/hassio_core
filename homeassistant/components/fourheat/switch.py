@@ -1,7 +1,7 @@
 """The 4Heat integration switch."""
 from __future__ import annotations
 
-from collections.abc import Callable
+# from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,7 +11,6 @@ from homeassistant.const import SERVICE_TURN_OFF, SERVICE_TURN_ON, STATE_OFF, ST
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from ._4heat import FourHeatDevice
 from .const import LOGGER
 from .coordinator import FourHeatCoordinator
 from .entity import (
@@ -20,13 +19,14 @@ from .entity import (
     _setup_descriptions,
     async_setup_entry_attribute_entities,
 )
+from .fourheat import FourHeatDevice
 
 
 @dataclass
 class FourHeatSwitchDescription(FourHeatEntityDescription, SwitchEntityDescription):
     """Class to describe a device switch."""
 
-    description: Callable[[str, FourHeatEntityDescription]] | None = None
+    # description: Callable[[str, FourHeatEntityDescription]] | None = None
 
 
 async def async_setup_entry(
@@ -41,8 +41,6 @@ async def async_setup_entry(
         config_entry,
         async_add_entities,
         _setup_descriptions(
-            hass,
-            config_entry,
             FourHeatSwitch,
             FourHeatSwitchDescription,
         ),
@@ -65,7 +63,7 @@ class FourHeatSwitch(FourHeatAttributeEntity, SwitchEntity):
         """Initialize the switch."""
 
         super().__init__(coordinator, device, attribute, description)
-        self.control_result: dict[str, Any] | None = None
+        self.control_result: str | None = None
         # self._attr_device_class = description.device_class
         LOGGER.debug("Additing switch: %s", attribute)
 

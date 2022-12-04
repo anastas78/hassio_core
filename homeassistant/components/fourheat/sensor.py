@@ -9,7 +9,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import StateType
 
-from ._4heat import FourHeatDevice
 from .const import LOGGER
 from .coordinator import FourHeatCoordinator
 from .entity import (
@@ -18,8 +17,7 @@ from .entity import (
     _setup_descriptions,
     async_setup_entry_attribute_entities,
 )
-
-# from .utils import build_device_description, setup_descriptions
+from .fourheat import FourHeatDevice
 
 
 @dataclass
@@ -38,7 +36,8 @@ async def async_setup_entry(
         config_entry,
         async_add_entities,
         _setup_descriptions(
-            hass, config_entry, FourHeatSensor, FourHeatSensorDescription
+            FourHeatSensor,
+            FourHeatSensorDescription,
         ),
         FourHeatSensor,
     )

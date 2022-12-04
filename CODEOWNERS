@@ -23,7 +23,6 @@ build.json @home-assistant/supervisor
 /homeassistant/util/ @epenet
 
 # Integrations
-/homeassistant/components/_4heat/ @zaubererty @anastas78
 /homeassistant/components/abode/ @shred86
 /tests/components/abode/ @shred86
 /homeassistant/components/accuweather/ @bieniu
@@ -375,6 +374,7 @@ build.json @home-assistant/supervisor
 /homeassistant/components/fortios/ @kimfrellsen
 /homeassistant/components/foscam/ @skgsergio
 /tests/components/foscam/ @skgsergio
+/homeassistant/components/fourheat/ @zaubererty @anastas78
 /homeassistant/components/freebox/ @hacf-fr @Quentame
 /tests/components/freebox/ @hacf-fr @Quentame
 /homeassistant/components/freedompro/ @stefano055415

@@ -1,7 +1,7 @@
 """Config flow for 4heat."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import voluptuous as vol
 
@@ -19,9 +19,9 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import FlowResult
 import homeassistant.helpers.config_validation as cv
 
-from ._4heat import FourHeatDevice
 from .const import DOMAIN, LOGGER, SENSORS, TCP_PORT
 from .exceptions import DeviceConnectionError
+from .fourheat import FourHeatDevice
 
 
 class FourHeatConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -45,9 +45,9 @@ class FourHeatConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Show initial dialog."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            name: str = user_input.get(CONF_NAME)
-            host: str = user_input.get(CONF_HOST)
-            port: int = user_input.get(CONF_PORT) | TCP_PORT
+            name = str(user_input.get(CONF_NAME))
+            host = str(user_input.get(CONF_HOST))
+            port = user_input.get(CONF_PORT, TCP_PORT)
             try:
                 device = await FourHeatDevice.create(name, host, port, initialize=True)
                 self.info = user_input
@@ -94,35 +94,34 @@ class FourHeatConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Confirm which sensors to use."""
         errors: dict[str, str] = {}
         if user_input is not None:
-            name = self.info.get(CONF_NAME)
-            host: str = self.info.get(CONF_HOST)
-            port: int = self.info.get(CONF_PORT) | TCP_PORT
-            mode: bool = user_input.get(CONF_MODE) | False
-            sensors: list = user_input.get(CONF_MONITORED_CONDITIONS)
-            device_info: str = self.info.get("device_info")
+            name = str(self.info.get(CONF_NAME))
+            host = str(self.info.get(CONF_HOST))
+            port = self.info.get(CONF_PORT, TCP_PORT)
+            mode: bool = bool(user_input.get(CONF_MODE)) | False
+            sensors: list[str] = user_input.get(CONF_MONITORED_CONDITIONS, [])
+            device_info = str(self.info.get("device_info"))
             if "all" in sensors:
-                sensors = self.info.get("sensors")
+                sensors = self.info.get("sensors", [])
             result = self.async_create_entry(
                 title=name,
                 data={
                     CONF_HOST: host,
                     CONF_MODE: mode,
                     CONF_PORT: port,
-                    CONF_MONITORED_CONDITIONS: list(sensors),
+                    CONF_MONITORED_CONDITIONS: sensors,
                     "device_info": device_info,
                 },
             )
             return result
-        else:
-            mode = False
-            sensors = self.info.get("sensors")
+        mode = False
+        sensors = self.info.get("sensors", [])
         if not sensors:
             errors["host"] = "cannot_connect"
         else:
             sensors_dict: dict[str, str] = {}
             sensors_dict["all"] = "Use all sensors"
             for sensor in sensors:
-                sensors_dict[sensor] = SENSORS[sensor][0]["name"]
+                sensors_dict[sensor] = cast(str, SENSORS[sensor][0]["name"])
             device_schema = vol.Schema(
                 {
                     vol.Optional(CONF_MODE, default=False, description=CONF_MODE): bool,
@@ -131,9 +130,9 @@ class FourHeatConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     ): cv.multi_select(sensors_dict),
                 }
             )
-            return self.async_show_form(
-                step_id="sensors", data_schema=device_schema, errors=errors
-            )
+        return self.async_show_form(
+            step_id="sensors", data_schema=device_schema, errors=errors
+        )
 
 
 @callback

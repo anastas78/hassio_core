@@ -7,9 +7,7 @@ from homeassistant.components.number import NumberEntity, NumberEntityDescriptio
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.typing import StateType
 
-from ._4heat import FourHeatDevice
 from .const import LOGGER
 from .coordinator import FourHeatCoordinator
 from .entity import (
@@ -18,6 +16,7 @@ from .entity import (
     _setup_descriptions,
     async_setup_entry_attribute_entities,
 )
+from .fourheat import FourHeatDevice
 
 
 @dataclass
@@ -36,7 +35,8 @@ async def async_setup_entry(
         config_entry,
         async_add_entities,
         _setup_descriptions(
-            hass, config_entry, FourHeatNumber, FourHeatNumberDescription
+            FourHeatNumber,
+            FourHeatNumberDescription,
         ),
         FourHeatNumber,
     )
@@ -63,12 +63,16 @@ class FourHeatNumber(FourHeatAttributeEntity, NumberEntity):
         LOGGER.debug("Additing number: %s", attribute)
 
     @property
-    def native_value(self) -> StateType:
+    def native_value(self) -> float | None:
         """Return value of sensor."""
-        return self.attribute_value
+        if not self.attribute_value:
+            return None
+        return float(self.attribute_value)
 
     async def async_set_native_value(self, value: float) -> None:
         """Set value."""
+        if not self.unique_id:
+            raise RuntimeError(f"No unique ID set to {self.attribute}")
         await self.coordinator.device.async_set_state(
             self.unique_id.split("-")[-1], int(value)
         )

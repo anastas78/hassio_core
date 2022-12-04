@@ -1,7 +1,6 @@
 """Provides the 4heat DataUpdateCoordinator."""
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Coroutine
 from dataclasses import dataclass
 from datetime import timedelta
@@ -13,18 +12,16 @@ from homeassistant.helpers import device_registry, entity_registry
 from homeassistant.helpers.debounce import Debouncer
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
-from ._4heat import FourHeatDevice
 from .const import (
     DATA_CONFIG_ENTRY,
     DOMAIN,
     ENTRY_RELOAD_COOLDOWN,
     LOGGER,
-    RETRY_UPDATE,
-    RETRY_UPDATE_SLEEP,
     SENSORS,
     UPDATE_INTERVAL,
 )
 from .exceptions import FourHeatError
+from .fourheat import FourHeatDevice
 
 
 @dataclass
@@ -32,6 +29,7 @@ class FourHeatEntryData:
     """Class for sharing data within a given config entry."""
 
     coordinator: FourHeatCoordinator | None = None
+    device: FourHeatDevice | None = None
 
 
 def get_entry_data(hass: HomeAssistant) -> dict[str, FourHeatEntryData]:
@@ -50,6 +48,9 @@ class FourHeatCoordinator(DataUpdateCoordinator):
         self.hass = hass
         self.entry = entry
         self.device = device
+        self.sensors: dict[str, dict] = {}
+        self.platforms: dict[str, list[dict[str, dict]]] = {}
+        self._update_is_running: bool = False
 
         super().__init__(
             hass,
@@ -77,19 +78,18 @@ class FourHeatCoordinator(DataUpdateCoordinator):
                 }
             self.sensors = sensors
         else:
-            self.sensors: dict[str, dict] = device.sensors
-        self.platforms: dict[str, list[dict[str, dict]]] = self._build_platforms()
+            self.sensors = device.sensors
+        self.platforms = self._build_platforms()
         entry.async_on_unload(self._debounced_reload.async_cancel)
-
-        self._retry_update: int = 0
-        self._update_is_running: bool = False
 
     @callback
     def _build_platforms(
         self,
-    ) -> dict[str, list[dict[str, dict]]] | None:
+    ) -> dict[str, list[dict[str, dict]]]:
         """Find available platforms."""
-        platforms = {}
+        platforms: dict[str, list] = {}
+        if not self.sensors:
+            return platforms
         for attr in self.sensors:
             try:
                 sensor_conf = SENSORS[attr]
@@ -97,21 +97,23 @@ class FourHeatCoordinator(DataUpdateCoordinator):
                 LOGGER.warning(
                     "Sensor %s is not known. Please inform the mainteainer", attr
                 )
-                sensor_conf = {
-                    "name": f"UN {attr}",
-                    "platform": "sensor",
-                }
+                sensor_conf = [
+                    {
+                        "name": f"UN {attr}",
+                        "platform": "sensor",
+                    }
+                ]
             for sensor in sensor_conf:
                 sensor_description = {}
                 keys = {}
                 try:
-
                     platform = str(sensor["platform"])
                 except KeyError:
                     LOGGER.warning(
                         "Mandatory config entry 'platforms' for sensor %s is missing. Please contact maintainer",
                         attr,
                     )
+                    platform = "sensor"
                 for key, value in sensor.items():
                     if key != "platform":
                         if value:
@@ -136,58 +138,29 @@ class FourHeatCoordinator(DataUpdateCoordinator):
         await self.hass.config_entries.async_reload(self.entry.entry_id)
 
     async def _async_update_data(self) -> None:
-        """Update data via device library.
+        """Update data via device library."""
 
-        Because of hardware bugs we try 'RETRY_UPDATE' times to get data from API, before setting Update failed.
-        Only one copy of the update is allowed to lower the load on device.
-        Temporary implementation for testing purposes
-        """
-
-        LOGGER.debug(
-            "Trying update of data. Try %s of %s",
-            self._retry_update + 1,
-            RETRY_UPDATE,
-        )
+        LOGGER.debug("Trying update of data")
         LOGGER.debug("Last update success: %s", self.last_update_success)
 
         if self._update_is_running:
             LOGGER.debug("Last update try is still running. Canceling new one")
             return
         self._update_is_running = True
-        while self._retry_update < RETRY_UPDATE:
-            try:
-                # if not self.device.initialized:
-                #     await self.device.initialize()
-                #     if not self.device.serial:
-                #         self.device.fourheat["serial"] = self.entry.data["device_info"][
-                #             "serial"
-                #         ]
-                #     self.sensors = self.device.sensors
-                #     self.platforms = self._build_platforms()
-                await self.device.async_update_data()
-                self._retry_update = RETRY_UPDATE
-            except FourHeatError as error:
-                self._retry_update = self._retry_update + 1
-                self.last_exception = error
-                LOGGER.debug(
-                    "Update of data try %s of %s failed: %s",
-                    self._retry_update,
-                    RETRY_UPDATE,
-                    repr(error),
-                )
-                if self.last_update_success:
-                    LOGGER.debug(
-                        "Keeping old values for at least %s seconds more",
-                        (RETRY_UPDATE - self._retry_update) * RETRY_UPDATE_SLEEP,
-                    )
-                    await asyncio.sleep(RETRY_UPDATE_SLEEP)
-                else:
-                    self.last_update_success = False
-                    raise UpdateFailed(
-                        f"No data current data available and update of data failed with: {error.args}"
-                    ) from error
-        self._retry_update = 0
-        self._update_is_running = False
+
+        try:
+            await self.device.async_update_data()
+            if self.sensors != self.device.sensors:
+                self.sensors = self.device.sensors
+        except FourHeatError as error:
+            self.last_exception = error
+            LOGGER.debug(
+                "Update of data failed: %s",
+                repr(error),
+            )
+            raise UpdateFailed from error
+        finally:
+            self._update_is_running = False
 
     def async_setup(self) -> None:
         """Set up the coordinator."""
@@ -195,7 +168,6 @@ class FourHeatCoordinator(DataUpdateCoordinator):
         entry = dev_reg.async_get_or_create(
             config_entry_id=self.entry.entry_id,
             name=self.name,
-            # connections={(device_registry.CONNECTION_NETWORK_MAC, self.mac)},
             manufacturer=self.manufacturer,
             model=self.model,
             identifiers={("serial", str(self.serial))},
@@ -211,10 +183,16 @@ class FourHeatCoordinator(DataUpdateCoordinator):
     def serial(self) -> str:
         """Get serial of the device."""
         if not self.device.initialized or not self.device.serial:
-            return self.entry.data["device_info"]["serial"]
-        return cast(str, self.device.serial)
+            if self.entry.unique_id:
+                return self.entry.unique_id
+            return self.entry.entry_id
+        return self.device.serial
 
     @property
     def manufacturer(self) -> str:
         """Manufacturer of the device."""
         return cast(str, self.device.manufacturer)
+
+    def info(self, attr: str) -> dict[str, Any] | None:
+        """Return info over attribute."""
+        return self.sensors[attr]

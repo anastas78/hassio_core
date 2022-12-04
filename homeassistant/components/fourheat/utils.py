@@ -1,8 +1,6 @@
 """4heat utilities helper."""
 from __future__ import annotations
 
-from typing import cast
-
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry
 
@@ -12,7 +10,7 @@ from .coordinator import FourHeatCoordinator
 
 def get_device_name(coordinator: FourHeatCoordinator) -> str:
     """Naming for device."""
-    return cast(str, coordinator.name)
+    return coordinator.name
 
 
 def get_device_entity_name(

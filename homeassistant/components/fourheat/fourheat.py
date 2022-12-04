@@ -5,25 +5,28 @@ from ast import literal_eval
 import asyncio
 from dataclasses import dataclass
 import ipaddress
+
+# import queue
 from socket import AF_INET, SOCK_STREAM, gethostbyname, socket
 from typing import Any, Literal, Union, cast
 
 from homeassistant.const import STATE_OFF, STATE_ON
+from homeassistant.helpers.typing import StateType
 
 from .const import (
     CONF_MODE,
     CONF_MODES,
     DEVICE_STATE_SENSOR,
-    ERROR_QUERY,
     GET_COMMAND,
     INFO_COMMAND,
-    INFO_QUERY,
     LOGGER,
     OFF_COMMAND,
     ON_COMMAND,
+    ON_ERROR_QUERY,
     RESULT_ERROR,
     RESULT_INFO,
     RESULT_OK,
+    RETRY_UPDATE,
     RETRY_UPDATE_SLEEP,
     SET_COMMAND,
     SOCKET_BUFFER,
@@ -33,11 +36,12 @@ from .const import (
     UNBLOCK_COMMAND,
 )
 from .exceptions import (
+    CommandError,
     DeviceConnectionError,
-    FourHeatCommandError,
     FourHeatError,
     InvalidCommand,
     InvalidMessage,
+    NotInitialized,
 )
 
 
@@ -87,18 +91,17 @@ class FourHeatDevice:
         self.host = host
         self.port = port
         self.mode = CONF_MODE[mode]
-        self.options: ConnectionOptions  # TODO move all connection options here
-        self.fourheat: dict[str, Any] | None = None  # TODO get serial, model i.e
-        self._settings: dict[
-            str, Any
-        ] | None = None  # TODO if we need to store something
+        self.options: ConnectionOptions  # TO DO move all connection options here
+        self.fourheat: dict[str, Any] | None = None  # TO DO get serial, model i.e
+        # self.settings: dict[str, Any] | None = None  # TO DO move monitored conditions
         self._status: dict[str, Any] | None = None
-        self.sensors: dict[str, dict] | None = None
+        self.sensors: dict[str, dict] = {}
         self.commands: dict[str, list] = CONF_MODES[self.mode]
         self.initialized: bool = False
         self._initializing: bool = False
         self._last_error: FourHeatError | None = None
-        self._command_is_running: str = ""
+        self._command_is_running: list | None = None
+        # self._command_queue = queue.PriorityQueue()
 
         # self.cfgChanged
 
@@ -131,39 +134,31 @@ class FourHeatDevice:
             self.port,
             self.mode,
         )
-        sensors = {}
         try:
             await self.update_fourheat()
+            self.sensors = {}
             if not async_init:
-                # result = await self.send_and_receive(INFO_QUERY)
-                result = await self.async_send_command(INFO_COMMAND)
-                assert result
-                if result["result"] == RESULT_ERROR:
-                    result = await self.send_and_receive(ERROR_QUERY)
-                elif result["result"] in [RESULT_INFO, RESULT_OK]:
-                    for item in result["sensors"]:
+                sensors = await self.async_send_command(command="init")
+                if sensors:
+                    for item in sensors:
                         LOGGER.debug(
                             "sensor: %s, type: %s, value: %s",
                             item["id"],
                             item["sensor_type"],
                             item["value"],
                         )
-                        sensors[item["id"]] = {
+                        self.sensors[item["id"]] = {
                             "sensor_type": item["sensor_type"],
                             "value": item["value"],
                         }
-                    self.sensors = sensors
                     self.initialized = True
                 else:
-                    self._last_error = InvalidMessage(
-                        f"Unknown initialization result: {result['result']}. Please inform maintainer."
-                    )
-                    raise self._last_error
-        except (FourHeatCommandError, DeviceConnectionError) as err:
+                    raise NotInitialized("Init got None result! Inform maintainer!")
+        except CommandError as err:
             LOGGER.debug(
                 "Could not fetch data from API at %s: %s", self.host, self._last_error
             )
-            raise FourHeatError(self._last_error) from err
+            raise NotInitialized(self._last_error) from err
         else:
             self._status = getattr(self, DEVICE_STATE_SENSOR)
         finally:
@@ -177,22 +172,11 @@ class FourHeatDevice:
                 self.host,
                 self.port,
             )
-            result = await self.send_and_receive(INFO_QUERY)
-            # result = await self.async_send_command("info")
+            result = await self.async_send_command("info")
             LOGGER.debug("4heat data received:%s", result)
-            if result["result"] == RESULT_ERROR:
-                error_query = []
-                assert self.sensors
-                for sensor in self.sensors:
-                    # ask for data for all registred sensors
-                    error_query.append(f"I{sensor}{str(0).zfill(12)}")
-                # error_query = GET_QUERY + error_query
-                # result = await self.send_and_receive(error_query)
-                result = await self.async_send_command("get", error_query)
-                LOGGER.debug("4heat data received:%s", result)
-            elif result["result"] == RESULT_INFO or RESULT_OK:
-                # TODO how is the auto add boolean working in HASS
-                for item in result["sensors"]:
+            # TO DO how is the auto add boolean working in HASS
+            if result:
+                for item in result:
                     if item["id"] not in self.sensors:
                         # add missing sensor
                         self.sensors[item["id"]] = {
@@ -202,69 +186,66 @@ class FourHeatDevice:
                     else:
                         self.sensors[item["id"]].update(item)
                 LOGGER.debug("Updated sensors: %s", self.sensors)
-                self._last_error = None
-        except DeviceConnectionError as err:
+            else:
+                raise CommandError("Update got None result! Inform maintainer!")
+        except CommandError as err:
             LOGGER.debug("4heat data update failed with:%s", str(err))
-            raise self._last_error from err
+            raise FourHeatError from self._last_error
 
-    async def send_and_receive(self, query: list) -> dict[str, str | list]:
+    async def _send_and_receive(self, query: list) -> tuple[str, list[dict]]:
         """Communication with 4heat device.
 
-        Returns dict {
-            result : TYPE str
-            sensors: SENSORS dict{
+        Returns tuple (
+            result : TYPE str,
+            sensors: dict{
                 id : unique_id
                 sensor_type: type B or J
-                value: value int
-            }
+                value: int
+            )
         """
+
         while bool(self._command_is_running):
             await asyncio.sleep(1)
-            LOGGER.debug("Waiting previous command to finish... ")
+            LOGGER.debug(
+                "Waiting previous command %s to finish... ",
+                self._command_is_running,
+            )
         try:
             self._command_is_running = query
-            data = {}
             soc = socket(AF_INET, SOCK_STREAM)
             soc.settimeout(SOCKET_TIMEOUT)
             soc.connect((self.host, self.port))
             # 4heat insists on double quotes..... Single quotes give empty answer
             msg = bytes("[" + ", ".join(f'"{item}"' for item in query) + "]", "utf-8")
-            LOGGER.debug("Message sent: %s", msg)
+            LOGGER.debug("Sending message: %s", msg)
             soc.send(msg)
             result = soc.recv(SOCKET_BUFFER).decode()
             LOGGER.debug("Result received: %s", result)
             soc.close()
             if result:
                 result = literal_eval(result)
-                data["result"] = result[0]
-                data["sensors"] = []
-                # if data["result"] in [RESULT_INFO, RESULT_OK]:
-                # if data["result"] == query[0]:
+                sensors = []
                 for sensor in result[2:]:
                     if len(sensor) > 6:
-                        data["sensors"].append(
+                        sensors.append(
                             {
                                 "id": sensor[1:6],
                                 "sensor_type": sensor[0],
                                 "value": int(sensor[7:]),
                             }
                         )
-                    # else:
-                    #     # we have ERR answer
-                    #     data["sensors"].append({"id": sensor})
                 self._last_error = None
                 self._command_is_running = None
-                return data
+                return (result[0], sensors)
             self._last_error = DeviceConnectionError("Got empty answer")
-            raise self._last_error
-        except Exception as err:
+        except OSError as err:
             self._last_error = DeviceConnectionError(
                 f"Unsuccessful communication with {self.host}:{self.port} - {str(err)}"
             )
             asyncio.create_task(
                 self._i_am_lazy()
             )  # give the lazy module 5 sec to recover
-            raise self._last_error from err
+        raise DeviceConnectionError from self._last_error
 
     async def _i_am_lazy(self) -> None:
         """4heat module is constatly rebooting or getting disconnected under load (and not only then....)."""
@@ -274,113 +255,145 @@ class FourHeatDevice:
         return
 
     async def async_send_command(
-        self, command: str, arg: list = None
-    ) -> dict | bool | None:
+        self, command: str, arg: list | None = None, retry: bool = True
+    ) -> list[dict] | None:
         """Send command."""
         LOGGER.debug(
             "Sending command %s%s",
             command,
             str(f" with arguments: {arg}" if arg else "."),
         )
+        while not self.initialized:
+            if command == "init":
+                command = "info"
+                break
+            try:
+                await self.initialize()
+            except NotInitialized:
+                LOGGER.debug("Can't initialize %s - %s", self.name, self._last_error)
         if command in self.commands:
             if arg:
                 query = self.commands[command] + arg
             else:
                 query = self.commands[command]
-            try:
-                result = await self.send_and_receive(query)
-                if command == INFO_COMMAND:
-                    if result == RESULT_ERROR:
-                        self.async_update_status()
-                        LOGGER.debug("Received %s. Started status update", RESULT_ERROR)
-                    else:
-                        LOGGER.debug("Command %s returned: %s", command, result)
-                        return result
+            retries = RETRY_UPDATE if retry else 1
+            retry_step = 1
+            while retry_step <= retries:
+                try:
+                    LOGGER.debug("Try: %s from %s", retry_step, retries)
+                    (result, sensors) = await self._send_and_receive(query)
+                    break
+                except DeviceConnectionError:
+                    retry_step += 1
+            else:
+                raise CommandError(
+                    f"Unsuccessful execution of command {command} - {str(self._last_error)}"
+                ) from self._last_error
+
+            if command == INFO_COMMAND:
+                if result == RESULT_ERROR:
+                    LOGGER.debug(
+                        "Received result %s. Started minimal status update",
+                        result,
+                    )
+                    return await self.async_send_command("get", ON_ERROR_QUERY)
+                if result == RESULT_INFO:
+                    LOGGER.debug(
+                        "Command %s returned: %s and sensors %s",
+                        command,
+                        result,
+                        sensors,
+                    )
+                    return sensors
+            if result == RESULT_OK:
                 if command == GET_COMMAND:
-                    LOGGER.debug("Command %s returned: %s", command, result)
-                    return result
+                    LOGGER.debug(
+                        "Command %s returned: %s with sensors: %s",
+                        command,
+                        result,
+                        sensors,
+                    )
+                    return sensors
                 if (
                     command == SET_COMMAND
-                    and result["result"] == query[0]
-                    and result["sensors"][0]["id"] == query[2][1:6]
-                    and result["sensors"][0]["value"] == int(query[2][7:])
-                    and result["sensors"][0]["sensor_type"] == "A"
+                    and sensors[0]["id"] == query[2][1:6]
+                    and sensors[0]["value"] == int(query[2][7:])
+                    and sensors[0]["sensor_type"] == "A"
                 ):
                     LOGGER.debug("Command '%s' successfully executed", command)
-                    return True
+                    return None
 
                 if (
                     command in [ON_COMMAND, OFF_COMMAND, UNBLOCK_COMMAND]
-                    and result["result"] == query[0]
-                    and result["sensors"][0]["id"] == query[2][1:6]
-                    and result["sensors"][0]["value"] == 0
-                    and result["sensors"][0]["sensor_type"] == "I"
+                    and sensors[0]["id"] == query[2][1:6]
+                    and sensors[0]["value"] == 0
+                    and sensors[0]["sensor_type"] == "I"
                 ):
                     LOGGER.debug("Command %s successfully executed", command)
-                    return True
-                raise InvalidMessage(
-                    f"Unknown answer {result} to command:{command}. Executed query: {query}. Please inform maintainer!"
-                )
-            except DeviceConnectionError as err:
-                raise FourHeatCommandError(
-                    f"Unsuccessful excecution of command {command} - {str(err)}"
-                ) from err
-        else:
-            raise InvalidCommand(
-                f"Command {command} is not implemented. Contact maintainer."
+                    return None
+            raise InvalidMessage(
+                f"Unknown answer {result} to command:{command}. Executed query: {query}. Please inform maintainer!"
             )
+        raise InvalidCommand(
+            f"Command {command} is not implemented. Contact maintainer."
+        )
 
     async def update_fourheat(self) -> None:
         """Update device settings."""
-        # TODO get a way to find more info about the device
+        # TO DO get a way to find more info about the device
         self.fourheat = {
             "model": "4heat device",
             "serial": None,
             "manufacturer": "4heat",
         }
 
-    async def async_set_state(self, attr: str, value: int) -> bool:
-        """Setting state of a 4heat device attribute."""
+    async def async_set_state(self, attr: str, value: StateType) -> bool:
+        """Set 4heat device attribute."""
 
         if attr not in self.sensors:
             raise AttributeError(f"Device doesn't have such attribute {attr}")
         if self.sensors[attr]["sensor_type"] == "J":
             raise AttributeError("Attribute is read only")
-        arg = [f"B{attr}{str(value).zfill(12)}"]
+        if not value:
+            raise AttributeError("Can't set value to None")
+        arg = [f"B{attr}{str(int(value)).zfill(12)}"]
         try:
             await self.async_send_command("set", arg)
             self.sensors[attr]["value"] = value
             return True
-        except (FourHeatCommandError, InvalidMessage, InvalidCommand) as err:
-            raise FourHeatCommandError(
+        except (CommandError, InvalidMessage, InvalidCommand) as err:
+            raise FourHeatError(
                 f"Exception on setting value of {attr} - {str(err)}"
             ) from err
 
-    async def async_get_state(self, attr: str | list) -> dict[str, str | list]:
-        """Geting state of a 4heat device attribute."""
+    # async def async_get_state(self, attr: str | list) -> None:  # dict[str, str | list]:
+    #     """Getting state of a 4heat device attribute."""
 
-        if isinstance(attr, str) and attr not in self.sensors:
-            raise AttributeError(f"Device doesn't have such attribute {attr}")
-        if not all(item in self.sensors for item in attr):
-            raise AttributeError("Device doesn't have one of the attributes asked")
-        arg = []
-        if isinstance(attr, list):
-            for item in attr:
-                arg.append([f"I{item}{str(0).zfill(12)}"])
-        else:
-            arg = [f"I{attr}{str(0).zfill(12)}"]
-        try:
-            result = await self.async_send_command("get", arg)
-            for sensor in result["sensors"]:
-                self.sensors[sensor["id"]]["value"] = sensor["value"]
-                self.sensors[sensor["id"]]["sensor_type"] = sensor["sensor_type"]
-            return result
-        except (FourHeatCommandError, InvalidMessage, InvalidCommand) as err:
-            raise FourHeatCommandError(
-                f"Exception on getting value of {attr} - {str(err)}"
-            ) from err
+    #     # if isinstance(attr, str) and attr not in self.sensors:
+    #     #     raise AttributeError(f"Device doesn't have such attribute {attr}")
+    #     # if not all(item in self.sensors for item in attr):
+    #     #     raise AttributeError("Device doesn't have one of the attributes asked")
+    #     arg = []
+    #     if isinstance(attr, list):
+    #         for item in attr:
+    #             if item not in self.sensors:
+    #                 raise AttributeError(f"Device doesn't have such attribute {item}")
+    #             arg.append([f"I{item}{str(0).zfill(12)}"])
+    #     else:
+    #         if attr not in self.sensors:
+    #             raise AttributeError(f"Device doesn't have such attribute {attr}")
+    #         arg.append([f"I{attr}{str(0).zfill(12)}"])
+    #     try:
+    #         sensors = await self.async_send_command("get", arg)
+    #         for sensor in sensors:
+    #             self.sensors[sensor["id"]]["value"] = sensor["value"]
+    #             self.sensors[sensor["id"]]["sensor_type"] = sensor["sensor_type"]
+    #     except (CommandError, InvalidMessage, InvalidCommand) as err:
+    #         raise FourHeatError(
+    #             f"Exception on getting value of {attr} - {str(err)}"
+    #         ) from err
 
-    def info(self, attr: str) -> dict[str, Any]:
+    def info(self, attr: str) -> dict[str, Any] | None:
         """Return info over attribute."""
         if not self.initialized:
             return None
@@ -388,12 +401,10 @@ class FourHeatDevice:
 
     def __getattr__(self, attr: str) -> str | None:
         """Get attribute."""
-        if not self.initialized:
+        if not self.attributes:
             return None
         if attr not in self.attributes:
-            raise AttributeError(
-                f"Device {self.device.model} has no attribute '{attr}'"
-            )
+            raise AttributeError(f"Device {self.model} has no attribute '{attr}'")
         return self.sensors[attr].get("value")
 
     @property
@@ -401,12 +412,12 @@ class FourHeatDevice:
         """Device ip address."""
         return self.options.ip_address
 
-    @property
-    def settings(self) -> dict[str, Any]:
-        """Get device settings."""
-        if not self.initialized:
-            return None
-        return self._settings
+    # @property
+    # def settings(self) -> dict[str, Any] | None:
+    #     """Get device settings."""
+    #     if not self.initialized:
+    #         return None
+    #     return self.settings
 
     @property
     def status(self) -> Literal["on", "off"] | None:
@@ -420,25 +431,24 @@ class FourHeatDevice:
         )
 
     @property
-    def model(self) -> str:
+    def model(self) -> str | None:
         """Device model."""
-        if not self.initialized:
+        if not self.fourheat:
             return None
-        return cast(str, self.fourheat["model"])
+        return cast(str, self.fourheat["model"]) or None
 
     @property
-    def serial(self) -> str:
+    def serial(self) -> str | None:
         """Device model."""
-        if not self.initialized:
+        if not self.fourheat:
             return None
         return cast(str, self.fourheat["serial"]) or None
 
     @property
-    def manufacturer(self) -> str:
+    def manufacturer(self) -> str | None:
         """Device manufacturer."""
-        if not self.initialized:
+        if not self.fourheat:
             return None
-        assert self.fourheat
         return cast(str, self.fourheat["manufacturer"]) or None
 
     # # @property
@@ -454,6 +464,6 @@ class FourHeatDevice:
     @property
     def attributes(self) -> list | None:
         """Get all attributes."""
-        if not self.initialized:
+        if not self.sensors:
             return None
-        return self.sensors
+        return list(self.sensors)

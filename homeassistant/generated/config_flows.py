@@ -15,7 +15,6 @@ FLOWS = {
         "utility_meter",
     ],
     "integration": [
-        "_4heat",
         "abode",
         "accuweather",
         "acmeda",
@@ -134,6 +133,7 @@ FLOWS = {
         "forecast_solar",
         "forked_daapd",
         "foscam",
+        "fourheat",
         "freebox",
         "freedompro",
         "fritz",

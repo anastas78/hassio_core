@@ -2,7 +2,7 @@
   "config": {
     "step": {
       "user": {
-        "description": "4heat controller is a bit 'lazy'. Try a couple of times to connect if you get connection error. ",
+        "description": "4heat controller is a bit 'lazy'. Try a couple of times to connect if you get connection errors. ",
         "data": {
           "host": "[%key:common::config_flow::data::host%]",
           "port": "[%key:common::config_flow::data::port%]"

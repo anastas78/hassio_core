@@ -1713,6 +1713,12 @@
       "config_flow": true,
       "iot_class": "local_polling"
     },
+    "fourheat": {
+      "name": "4heat",
+      "integration_type": "device",
+      "config_flow": true,
+      "iot_class": "local_polling"
+    },
     "foursquare": {
       "name": "Foursquare",
       "integration_type": "hub",

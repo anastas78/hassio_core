@@ -1,5 +1,5 @@
 {
-  "domain": "_4heat",
+  "domain": "fourheat",
   "name": "4heat",
   "integration_type": "device",
   "config_flow": true,

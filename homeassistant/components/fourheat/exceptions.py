@@ -22,7 +22,7 @@ class DeviceConnectionError(FourHeatError):
     """Exception indicates device connection errors."""
 
 
-class FourHeatCommandError(FourHeatError):
+class CommandError(FourHeatError):
     """Exception indicates command execution errors."""
 
 

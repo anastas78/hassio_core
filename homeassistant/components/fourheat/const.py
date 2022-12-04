@@ -15,7 +15,7 @@ from homeassistant.const import (
 )
 from homeassistant.helpers.entity import EntityCategory
 
-DOMAIN = "4heat"
+DOMAIN = "fourheat"
 LOGGER: Logger = getLogger(__package__)
 
 ENTRY_RELOAD_COOLDOWN = 20
@@ -33,7 +33,7 @@ UNBLOCK_COMMAND = "unblock"
 SET_COMMAND = "set"
 GET_COMMAND = "get"
 INFO_COMMAND = "info"
-# TODO move to schema not const
+# TO DO move to schema not const
 # EXECUTE = {"info": "SEL", "command": "SEC", "config": {"network": "CF7"}}
 # EXECUTE_INFOS = {"all": "0"}
 # EXECUTE_COMMANDS = {"set": "1", "get": "3"}
@@ -43,7 +43,7 @@ INFO_COMMAND = "info"
 INFO_QUERY = ["SEL", "0"]  # Ask for a list of all sensors
 SET_QUERY = ["SEC", "1"]  # SET sensor value ["SEC","1","B{sensor}{str(value).zfill(12)}"]
 GET_QUERY = ["SEC", "3"]  # GET sensor value ["SEC","3","I{sensor}{str(value).zfill(12)}"]
-ERROR_QUERY = [
+ON_ERROR_QUERY = [
     "I30001000000000000",
     "I30002000000000000",
     "I30017000000000000"
@@ -79,7 +79,7 @@ CONF_MODES = {
         GET_COMMAND: GET_QUERY,
     },
 }
-# TODO 20211 is potentionally MAX POWER or must be made configurable
+# TO DO 20211 is potentionally MAX POWER or must be made configurable
 MAX_POWER = 5
 
 STATE_NAMES = {
@@ -140,7 +140,7 @@ if MAX_POWER:
         POWER_NAMES[x] = "P" + str(x)
     POWER_NAMES[MAX_POWER + 1] = "Auto"
 
-SENSORS = {
+SENSORS: dict[str, list[dict]] = {
     # Sensors list (str, dict(str,str|list))
     # "id": str                 unique_id coming from device
     #   [   optional list of dict if one id is going to utilize more platforms
@@ -569,7 +569,7 @@ SENSORS = {
     "21700": [
         {
             "id": "21700",
-            "name": "Room termostat",
+            "name": "Room thermostat",
             "platform": "sensor",
             "native_unit_of_measurement": UnitOfTemperature.CELSIUS,
             "device_class": SensorDeviceClass.TEMPERATURE,

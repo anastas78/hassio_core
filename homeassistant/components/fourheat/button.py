@@ -9,7 +9,6 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from ._4heat import FourHeatDevice
 from .const import LOGGER
 from .coordinator import FourHeatCoordinator
 from .entity import (
@@ -18,12 +17,14 @@ from .entity import (
     _setup_descriptions,
     async_setup_entry_attribute_entities,
 )
+from .fourheat import FourHeatDevice
 
 
 @dataclass
 class FourHeatButtonDescription(FourHeatEntityDescription, ButtonEntityDescription):
     """Class to describe a Button entity."""
 
+    press_action: Callable | None = None
     supported: Callable = lambda _: True
 
 
@@ -39,7 +40,9 @@ async def async_setup_entry(
         config_entry,
         async_add_entities,
         _setup_descriptions(
-            hass, config_entry, FourHeatButton, FourHeatButtonDescription
+            # hass, config_entry,
+            FourHeatButton,
+            FourHeatButtonDescription,
         ),
         FourHeatButton,
     )
@@ -65,4 +68,6 @@ class FourHeatButton(FourHeatAttributeEntity, ButtonEntity):
 
     async def async_press(self) -> None:
         """Triggers the Shelly button press service."""
+        if not self.entity_description.press_action:
+            raise NotImplementedError("Please add button action in CONST.py")
         await self.entity_description.press_action(self.coordinator)

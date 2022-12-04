@@ -11,15 +11,14 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity
 from homeassistant.helpers.entity import DeviceInfo, EntityDescription
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.entity_registry import RegistryEntry
 from homeassistant.helpers.typing import StateType
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from ._4heat import FourHeatDevice
 from .const import LOGGER, SENSORS
 from .coordinator import FourHeatCoordinator, get_entry_data
-from .exceptions import DeviceConnectionError
-from .utils import async_remove_fourheat_entity, get_device_entity_name, get_device_name
+from .exceptions import FourHeatError
+from .fourheat import FourHeatDevice
+from .utils import get_device_entity_name, get_device_name
 
 
 @dataclass
@@ -30,7 +29,7 @@ class FourHeatEntityDescription(EntityDescription):
     available: Callable[[FourHeatDevice], bool] | None = None
     # Callable (settings, device), return true if entity should be removed
     removal_condition: Callable[[dict, FourHeatDevice], bool] | None = None
-    extra_state_attributes: Callable[[FourHeatDevice], dict | None] | None = None
+    extra_state_attributes: Callable[[FourHeatCoordinator], dict | None] | None = None
 
 
 class FourHeatEntity(CoordinatorEntity[FourHeatCoordinator]):
@@ -54,27 +53,31 @@ class FourHeatEntity(CoordinatorEntity[FourHeatCoordinator]):
         """Available."""
         return self.coordinator.last_update_success
 
+    async def async_added_to_hass(self) -> None:
+        """When entity is added to HASS."""
+        self.async_on_remove(self.coordinator.async_add_listener(self._update_callback))
+
     async def async_update(self) -> None:
         """Update entity with latest info."""
         await self.coordinator.async_request_refresh()
-
-    async def set_state(self, **kwargs: Any) -> Any:
-        """Set entity state."""
-        LOGGER.debug("Setting state for entity %s, state: %s", self.name, kwargs)
-        try:
-            await self.device.set_state(**kwargs)
-            self.async_write_ha_state()
-            return True
-        except DeviceConnectionError as err:
-            self.coordinator.last_update_success = False
-            raise HomeAssistantError(
-                f"Setting state for entity {self.name} failed, state: {kwargs}, error: {err.args}"
-            ) from err
 
     @callback
     def _update_callback(self) -> None:
         """Handle device update."""
         self.async_write_ha_state()
+
+    async def set_state(self, **kwargs: Any) -> Any:
+        """Set entity state."""
+        LOGGER.debug("Setting state for entity %s, state: %s", self.name, kwargs)
+        try:
+            await self.device.async_set_state(**kwargs)
+            self.async_write_ha_state()
+            return True
+        except FourHeatError as err:
+            self.coordinator.last_update_success = False
+            raise HomeAssistantError(
+                f"Setting state for entity {self.name} failed, state: {kwargs}, error: {err.args}"
+            ) from err
 
 
 class FourHeatAttributeEntity(FourHeatEntity, entity.Entity):
@@ -107,29 +110,22 @@ class FourHeatAttributeEntity(FourHeatEntity, entity.Entity):
 
         return cast(StateType, self.entity_description.value(value))
 
-    @property
-    def available(self) -> bool:
-        """Available."""
-        available = super().available
+    # @property
+    # def available(self) -> bool:
+    #     """Available."""
+    #     available = super().available
 
-        if not available or not self.entity_description.available:
-            return available
+    #     if not available or not self.entity_description.available:
+    #         return available
 
-        return self.entity_description.available(self.device)
+    #     return self.entity_description.available(self.device)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any] | None:
         """Return the state attributes."""
         if self.entity_description.extra_state_attributes is None:
             return None
-        if not self.device.sensors:
-            return None
-        return self.entity_description.extra_state_attributes(self.device)
-
-    @callback
-    def _update_callback(self) -> None:
-        """Handle device update."""
-        self.async_write_ha_state()
+        return self.entity_description.extra_state_attributes(self.coordinator)
 
 
 @callback
@@ -137,120 +133,51 @@ def async_setup_entry_attribute_entities(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
-    sensors: Mapping[str, FourHeatEntityDescription],
-    # sensors: Callable[[FourHeatCoordinator], dict[str, FourHeatDeviceAttributeEntity]],
+    sensors_descriptions: Mapping[str, FourHeatEntityDescription],
     sensor_class: Callable,
-    # description_class: Callable[[RegistryEntry], FourHeatEntityDescription],
 ) -> None:
     """Set up entities for attributes."""
     coordinator = get_entry_data(hass)[config_entry.entry_id].coordinator
 
     assert coordinator
-    if coordinator.device.initialized:
-        # Set up entities for device attributes.
-        assert coordinator.device
-        # 1sensors_descriptions = sensors(coordinator)
-        # sensors_descriptions = sensors
-        entities = []
-        # 1for sensor in coordinator.device.sensors:
-        for sensor in sensors:
-            # We get the real description of the sensor
-            description = sensors[sensor]
+    entities: list[FourHeatAttributeEntity] = []
 
-            if description is None:
-                continue
+    for attribute in coordinator.sensors:
+        description = sensors_descriptions.get(attribute)
 
-            # Filter out non-existing sensors and sensors without a value
-            if getattr(coordinator.device, sensor, None) in (-1, None):
-                continue
+        if description is None:
+            continue
 
-            # Filter and remove entities that according to settings should not create an entity
-            if description.removal_condition and description.removal_condition(
-                coordinator.device.settings, coordinator.device
-            ):
-                domain = sensor_class.__module__.split(".")[-1]
-                unique_id = f"{coordinator.serial}-{coordinator.device.description}-{domain}-{sensor}"
-                async_remove_fourheat_entity(hass, domain, unique_id)
-            else:
-                entities.append((sensor, description))
-        if not entities:
-            return
-
-        async_add_entities(
-            [
-                sensor_class(coordinator, coordinator.device, sensor, description)
-                for sensor, description in entities
-            ]
+        # Filter and remove entities that according to settings should not create an entity
+        # if description.removal_condition and description.removal_condition(
+        #     coordinator.device.settings, coordinator.device
+        # ):
+        #     domain = sensor_class.__module__.split(".")[-1]
+        #     unique_id = f"{coordinator.serial}-{coordinator.device.description}-{domain}-{sensor}"
+        #     async_remove_fourheat_entity(hass, domain, unique_id)
+        # else:
+        entities.append(
+            sensor_class(coordinator, coordinator.device, attribute, description)
         )
-    # else:
-    #     # Restore device attributes entities.
-    #     entities = []
 
-    #     ent_reg = entity_registry.async_get(hass)
-    #     entries = entity_registry.async_entries_for_config_entry(
-    #         ent_reg, config_entry.entry_id
-    #     )
-
-    #     domain = sensor_class.__module__.split(".")[-1]
-
-    #     for entry in entries:
-    #         if entry.domain != domain:
-    #             continue
-
-    #         attribute = entry.unique_id.split("-")[-1]
-    #         # description = description_class(entry)
-    #         description = sensors[attribute]
-
-    #         entities.append(
-    #             sensor_class(coordinator, coordinator.device, attribute, description)
-    #         )
-
-    #     if not entities:
-    #         return
-
-    #     async_add_entities(entities)
-
-
-@callback
-def _build_device_description(entry: RegistryEntry) -> FourHeatEntityDescription:
-    """Build description when restoring device attribute entities."""
-    return FourHeatEntityDescription(
-        key="",
-        name="",
-        icon=entry.original_icon,
-        unit_of_measurement=entry.unit_of_measurement,
-        device_class=entry.original_device_class,
-    )
+    if not entities:
+        return
+    async_add_entities(entities)
 
 
 @callback
 def _setup_descriptions(
-    hass: HomeAssistant,
-    config_entry: ConfigEntry,
-    sensor_class: Callable,
-    description_class: Callable[[RegistryEntry], FourHeatEntityDescription],
+    sensor_class: Callable[..., FourHeatAttributeEntity],
+    description_class: Callable[[str], FourHeatEntityDescription],
 ) -> dict[str, FourHeatEntityDescription]:
     """Build descriptions from .const SENSORS by platform."""
-    coordinator = get_entry_data(hass)[config_entry.entry_id].coordinator
-    assert coordinator
-    descriptions = {}
-    if not coordinator.platforms:
-        # restore from config entry
-        for sensor, description in SENSORS.items():
-            sensor_description = description_class(sensor)
-            for sensor_desc in description:
-                if sensor_desc["platform"] == sensor_class.__module__.split(".")[-1]:
-                    for key, value in sensor_desc.items():
-                        setattr(sensor_description, key, value)
-                    descriptions[sensor] = sensor_description
-        return descriptions
 
-    # Set up descriptions for device attributes.
-    for sensor in coordinator.platforms[sensor_class.__module__.split(".")[-1]]:
-        sensor_id = list(sensor.keys())[0]
-        sensor_conf = list(sensor.values())[0]
-        sensor_description = description_class(sensor_id)
-        for key, value in sensor_conf.items():
-            setattr(sensor_description, key, value)
-        descriptions[sensor_id] = sensor_description
+    descriptions: dict[str, FourHeatEntityDescription] = {}
+    for sensor, description in SENSORS.items():
+        for sensor_desc in description:
+            if sensor_desc["platform"] == sensor_class.__module__.split(".")[-1]:
+                sensor_description = description_class(sensor)
+                for key, value in sensor_desc.items():
+                    setattr(sensor_description, key, value)
+                descriptions[sensor] = sensor_description
     return descriptions
