@@ -3,11 +3,7 @@ from __future__ import annotations
 
 
 class FourHeatError(Exception):
-    """Base class for aioshelly errors."""
-
-
-class ConnectionClosed(FourHeatError):
-    """Exception raised when the connection is closed."""
+    """Base class for 4heat errors."""
 
 
 class InvalidMessage(FourHeatError):

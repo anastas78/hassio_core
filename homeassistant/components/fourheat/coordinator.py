@@ -51,6 +51,7 @@ class FourHeatCoordinator(DataUpdateCoordinator):
         self.sensors: dict[str, dict] = {}
         self.platforms: dict[str, list[dict[str, dict]]] = {}
         self._update_is_running: bool = False
+        self.unload_platforms: dict | None = None
 
         super().__init__(
             hass,
@@ -79,11 +80,15 @@ class FourHeatCoordinator(DataUpdateCoordinator):
             self.sensors = sensors
         else:
             self.sensors = device.sensors
-        self.platforms = self._build_platforms()
+        self.platforms = self.build_platforms()
+
         entry.async_on_unload(self._debounced_reload.async_cancel)
+        entry.async_on_unload(
+            self.async_add_listener(self._async_device_updates_handler)
+        )
 
     @callback
-    def _build_platforms(
+    def build_platforms(
         self,
     ) -> dict[str, list[dict[str, dict]]]:
         """Find available platforms."""
@@ -137,7 +142,22 @@ class FourHeatCoordinator(DataUpdateCoordinator):
         LOGGER.debug("Reloading entry %s", self.name)
         await self.hass.config_entries.async_reload(self.entry.entry_id)
 
-    async def _async_update_data(self) -> None:
+    @callback
+    def _async_device_updates_handler(self) -> None:
+        """Finish async init."""
+        if self.sensors.keys() != self.device.sensors.keys():
+            self.unload_platforms = self.platforms
+            self.sensors = self.device.sensors
+            self.platforms = self.build_platforms()
+            self.async_setup()
+            self.hass.async_create_task(
+                self.hass.config_entries.async_forward_entry_setups(
+                    self.entry, self.platforms
+                )
+            )
+            self.hass.async_create_task(self._debounced_reload.async_call())
+
+    async def _async_update_data(self, init: bool = False) -> None:
         """Update data via device library."""
 
         LOGGER.debug("Trying update of data")
@@ -150,8 +170,6 @@ class FourHeatCoordinator(DataUpdateCoordinator):
 
         try:
             await self.device.async_update_data()
-            if self.sensors != self.device.sensors:
-                self.sensors = self.device.sensors
         except FourHeatError as error:
             self.last_exception = error
             LOGGER.debug(

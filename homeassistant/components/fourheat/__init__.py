@@ -40,12 +40,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     fourheat_entry_data.coordinator = FourHeatCoordinator(hass, entry, device)
     fourheat_entry_data.coordinator.async_setup()
-
     if not fourheat_entry_data.coordinator.platforms:
         # it is the first init of device
         try:
-            device = await FourHeatDevice.create(
-                name, host, port, mode, initialize=True
+            await device.initialize()
+            fourheat_entry_data.coordinator.sensors = device.sensors
+            fourheat_entry_data.coordinator.platforms = (
+                fourheat_entry_data.coordinator.build_platforms()
             )
         except FourHeatError as err:
             raise ConfigEntryNotReady(str(err)) from err
@@ -104,7 +105,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     return True
 
 
-async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+async def async_unload_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+) -> bool:
     """Unload a config entry."""
     fourheat_entry_data = get_entry_data(hass)[entry.entry_id]
 
