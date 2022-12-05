@@ -242,9 +242,13 @@ class FourHeatDevice:
             self._last_error = DeviceConnectionError(
                 f"Unsuccessful communication with {self.host}:{self.port} - {str(err)}"
             )
-            asyncio.create_task(
-                self._i_am_lazy()
-            )  # give the lazy module 5 sec to recover
+        LOGGER.debug(
+            "On running: %s, got last_error: %s",
+            self._command_is_running,
+            self._last_error,
+        )
+
+        asyncio.create_task(self._i_am_lazy())  # give the lazy module 5 sec to recover
         raise DeviceConnectionError from self._last_error
 
     async def _i_am_lazy(self) -> None:
