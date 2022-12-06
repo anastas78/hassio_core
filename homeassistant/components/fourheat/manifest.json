@@ -3,9 +3,9 @@
   "name": "4heat",
   "integration_type": "device",
   "config_flow": true,
-  "documentation": "https://www.home-assistant.io/integrations/4heat",
+  "documentation": "https://www.home-assistant.io/integrations/fourheat",
   "requirements": [],
   "dependencies": [],
-  "codeowners": ["@zaubererty", "@anastas78"],
+  "codeowners": ["@anastas78"],
   "iot_class": "local_polling"
 }

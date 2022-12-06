@@ -294,8 +294,8 @@ SENSORS: dict[str, list[dict]] = {
     "30015": [
         {
             "id": "30015",
-            "name": "Combustion fan",
-            "native_unit_of_measurement": "%",
+            "name": "Fire light temperature",
+            "native_unit_of_measurement": UnitOfTemperature,
             "state_class": SensorStateClass.MEASUREMENT,
             "platform": "sensor",
         }
