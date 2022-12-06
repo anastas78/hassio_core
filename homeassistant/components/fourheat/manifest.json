@@ -3,7 +3,7 @@
   "name": "4heat",
   "integration_type": "device",
   "config_flow": true,
-  "documentation": "https://www.home-assistant.io/integrations/fourheat",
+  "documentation": "https://github.com/anastas78/homeassistant-fourheat",
   "requirements": [],
   "dependencies": [],
   "codeowners": ["@anastas78"],
