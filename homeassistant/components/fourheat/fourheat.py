@@ -223,20 +223,25 @@ class FourHeatDevice:
             LOGGER.debug("Result received: %s", result)
             soc.close()
             if result:
-                result = literal_eval(result)
-                sensors = []
-                for sensor in result[2:]:
-                    if len(sensor) > 6:
-                        sensors.append(
-                            {
-                                "id": sensor[1:6],
-                                "sensor_type": sensor[0],
-                                "value": int(sensor[7:]),
-                            }
-                        )
-                self._last_error = None
-                self._command_is_running = None
-                return (result[0], sensors)
+                try:
+                    result = literal_eval(result)
+                    sensors = []
+                    for sensor in result[2:]:
+                        if len(sensor) > 6:
+                            sensors.append(
+                                {
+                                    "id": sensor[1:6],
+                                    "sensor_type": sensor[0],
+                                    "value": int(sensor[7:]),
+                                }
+                            )
+                    self._last_error = None
+                    self._command_is_running = None
+                    return (result[0], sensors)
+                except SyntaxError as error:
+                    self._last_error = DeviceConnectionError(
+                        f"Got malformed answer from device - {str(error)}"
+                    )
             self._last_error = DeviceConnectionError("Got empty answer")
         except OSError as err:
             self._last_error = DeviceConnectionError(
